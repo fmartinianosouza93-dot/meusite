@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Sistema SGC</title>
+<style>
+body { font-family: Arial,sans-serif; background:#f5f5f5; margin:0;}
+header{background:#001f4d;color:#fff;padding:1rem;text-align:center;}
+nav{display:flex;background:#003366;}
+nav button{flex:1;padding:1rem;border:none;background:#003366;color:white;cursor:pointer;}
+nav button:hover{background:#0055a5;}
+section{display:none;padding:1rem;}
+section.active{display:block;}
+table{width:100%;border-collapse:collapse;margin-top:1rem;}
+th,td{border:1px solid #ccc;padding:8px;text-align:center;}
+th{background:#003366;color:white;}
+input,select,textarea{padding:6px;margin:4px;}
+.actions button{margin:2px;padding:4px 8px; cursor:pointer;}
+#chat-box{height:300px;overflow-y:auto;border:1px solid #ccc;padding:10px;background:white;}
+.msg{margin:5px 0;padding:5px;border-radius:5px;display:flex;justify-content:space-between;align-items:center;}
+.me{background:#d1ffd1;text-align:right;}
+.other{background:#f1f1f1;text-align:left;}
+.status-pago{color:green;font-weight:bold;}
+.status-naoPago{color:red;font-weight:bold;}
+tbody{display:block; max-height:300px; overflow-y:auto;}
+thead, tbody tr{display:table; width:100%; table-layout:fixed;}
+</style>
+</head>
+<body>
+<header><h1>Sistema de Cobrança SGC</h1></header>
+<nav>
+  <button onclick="showSection('login')">Login</button>
+  <button onclick="showSection('inadimplentes')">Inadimplentes</button>
+  <button onclick="showSection('chat')">Chat</button>
+</nav>
+
+<section id="login" class="active">
+  <h2>Identificação</h2>
+  <input type="text" id="username" placeholder="Digite seu nome">
+  <button onclick="login()">Entrar</button>
+</section>
+
+<section id="inadimplentes">
+  <h2>Controle de Inadimplentes</h2>
+  <form id="addForm">
+    <input type="text" id="cliente" placeholder="Cliente" required>
+    <input type="date" id="vencimento" required>
+    <input type="text" id="nota" placeholder="Nota" required>
+    <input type="number" id="valor" placeholder="Valor" required>
+    <textarea id="observacao" placeholder="Observações"></textarea>
+    <button type="submit">Adicionar</button>
+  </form>
+  <input type="text" id="filtroNome" placeholder="Filtrar por cliente" oninput="renderInadimplentes()">
+  <select id="filtroStatus" onchange="renderInadimplentes()">
+    <option value="">Todos</option>
+    <option value="pago">Pago</option>
+    <option value="naoPago">Não Pago</option>
+  </select>
+  <table>
+    <thead>
+      <tr>
+        <th>Cliente</th><th>Vencimento</th><th>Nota</th><th>Valor</th>
+        <th>Operador</th><th>Ações</th><th>Observações</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="inadimplentes-list"></tbody>
+  </table>
+</section>
+
+<section id="chat">
+  <h2>Chat</h2>
+  <div id="chat-box"></div>
+  <input type="text" id="chat-msg" placeholder="Digite sua mensagem">
+  <button onclick="sendMessage()">Enviar</button>
+</section>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<script>
+// CONFIGURAÇÃO FIREBASE
+const firebaseConfig = {
+  apiKey: "SUA_APIKEY",
+  authDomain: "SEU_AUTHDOMAIN",
+  databaseURL: "SEU_DATABASEURL",
+  projectId: "SEU_PROJECTID",
+  storageBucket: "SEU_STORAGEBUCKET",
+  messagingSenderId: "SEU_MSGID",
+  appId: "SEU_APPID"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+let currentUser = "";
+
+function showSection(id){
+  document.querySelectorAll("section").forEach(sec=>sec.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+function login(){
+  const name = document.getElementById("username").value.trim();
+  if(!name) return alert("Digite seu nome");
+  currentUser = name;
+  showSection("inadimplentes");
+}
+
+// ADICIONAR INADIMPLENTES
+document.getElementById("addForm").addEventListener("submit", e=>{
+  e.preventDefault();
+  const data = {
+    cliente: document.getElementById("cliente").value,
+    vencimento: document.getElementById("vencimento").value,
+    nota: document.getElementById("nota").value,
+    valor: parseFloat(document.getElementById("valor").value),
+    operador: currentUser,
+    observacao: document.getElementById("observacao").value,
+    status: "naoPago",
+    acao: ""
+  };
+  db.ref("inadimplentes").push(data);
+  e.target.reset();
+});
+
+// RENDER INADIMPLENTES
+function renderInadimplentes(){
+  const filtroNome = document.getElementById("filtroNome").value.toLowerCase();
+  const filtroStatus = document.getElementById("filtroStatus").value;
+  db.ref("inadimplentes").once("value", snap=>{
+    const tbody = document.getElementById("inadimplentes-list");
+    tbody.innerHTML="";
+    snap.forEach(item=>{
+      const d = item.val();
+      if(filtroNome && !d.cliente.toLowerCase().includes(filtroNome)) return;
+      if(filtroStatus && d.status !== filtroStatus) return;
+      const tr = document.createElement("tr");
+      const statusClass = d.status === "pago" ? "status-pago" : "status-naoPago";
+      tr.innerHTML=`
+        <td>${d.cliente}</td>
+        <td>${d.vencimento}</td>
+        <td>${d.nota}</td>
+        <td>${d.valor.toFixed(2)}</td>
+        <td>${d.operador}</td>
+        <td class="actions">
+          <button onclick="updateAcao('${item.key}','SGC')">SGC</button>
+          <button onclick="updateAcao('${item.key}','Securitizadora')">Securitizadora</button>
+          <button onclick="updateStatus('${item.key}','pago')">Pago</button>
+          <button onclick="updateStatus('${item.key}','naoPago')">Não Pago</button>
+          <button onclick="excluirCliente('${item.key}')">Excluir</button>
+        </td>
+        <td>${d.observacao||""}</td>
+        <td class="${statusClass}">${d.status}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    tbody.scrollTop = tbody.scrollHeight; // scroll automático
+  });
+}
+
+// ATUALIZAR STATUS E AÇÃO
+function updateAcao(id, acao){
+  db.ref("inadimplentes/"+id).update({acao});
+}
+function updateStatus(id,status){
+  db.ref("inadimplentes/"+id).update({status});
+}
+function excluirCliente(id){
+  if(confirm("Tem certeza que deseja excluir este cliente?")){
+    db.ref("inadimplentes/"+id).remove();
+  }
+}
+
+// LISTENER INADIMPLENTES
+db.ref("inadimplentes").on("value", renderInadimplentes);
+
+// CHAT
+function sendMessage(){
+  const msg = document.getElementById("chat-msg").value.trim();
+  if(!msg) return;
+  db.ref("chat").push({user:currentUser,text:msg});
+  document.getElementById("chat-msg").value="";
+}
+
+db.ref("chat").on("value", snap=>{
+  const box = document.getElementById("chat-box");
+  box.innerHTML="";
+  snap.forEach(item=>{
+    const d = item.val();
+    const div = document.createElement("div");
+    div.className = "msg "+(d.user===currentUser?"me":"other");
+    div.innerHTML=`<span>${d.user}: ${d.text}</span>`;
+    if(d.user===currentUser){
+      const btn=document.createElement("button");
+      btn.textContent="Excluir";
+      btn.onclick=()=>db.ref("chat/"+item.key).remove();
+      div.appendChild(btn);
+    }
+    box.appendChild(div);
+  });
+  box.scrollTop = box.scrollHeight;
+});
+</script>
+</body>
+</html>
