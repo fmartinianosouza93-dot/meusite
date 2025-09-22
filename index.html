@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Sistema SGC Funcional</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+body { font-family: Arial,sans-serif; background:#f5f5f5; margin:0;}
+header{background:#001f4d;color:white;padding:1rem;text-align:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);}
+nav{display:flex;background:#003366;}
+nav button{flex:1;padding:1rem;border:none;background:#003366;color:white;cursor:pointer;font-weight:bold;}
+nav button:hover{background:#0055a5;}
+section{display:none;padding:1rem;}
+section.active{display:block;}
+table{width:100%;border-collapse:collapse;margin-top:1rem;background:white;box-shadow:0 2px 4px rgba(0,0,0,0.1);}
+th,td{border:1px solid #ccc;padding:8px;text-align:center;}
+th{background:#003366;color:white;}
+input,select,textarea{padding:6px;margin:4px;border:1px solid #ccc;border-radius:4px;}
+.actions button{margin:2px;padding:4px 8px; cursor:pointer;border:none;border-radius:4px;color:white;font-weight:bold;}
+.actions button:hover{opacity:0.8;}
+#chat-box{height:300px;overflow-y:auto;border:1px solid #ccc;padding:10px;background:white;box-shadow:0 2px 4px rgba(0,0,0,0.1);}
+.msg{margin:5px 0;padding:5px;border-radius:5px;display:flex;justify-content:space-between;align-items:center;}
+.me{background:#d1ffd1;text-align:right;}
+.other{background:#f1f1f1;text-align:left;}
+.status-pago{color:white;background:green;padding:2px 6px;border-radius:4px;font-weight:bold;}
+.status-naoPago{color:white;background:red;padding:2px 6px;border-radius:4px;font-weight:bold;}
+tbody{display:block; max-height:300px; overflow-y:auto;}
+thead, tbody tr{display:table; width:100%; table-layout:fixed;}
+td[contenteditable]{background:#ffffe0;}
+button.icon-btn{padding:4px 6px;margin:0 2px;font-size:14px;}
+button.icon-btn i{margin-right:4px;}
+</style>
+</head>
+<body>
+<header><h1>Sistema de Cobrança SGC</h1></header>
+<nav>
+  <button id="nav-login">Login</button>
+  <button id="nav-inadimplentes">Inadimplentes</button>
+  <button id="nav-chat">Chat</button>
+</nav>
+
+<section id="login" class="active">
+  <h2>Identificação</h2>
+  <input type="text" id="username" placeholder="Digite seu nome">
+  <button id="btn-login"><i class="fa fa-sign-in-alt"></i> Entrar</button>
+</section>
+
+<section id="inadimplentes">
+  <h2>Controle de Inadimplentes</h2>
+  <form id="addForm">
+    <input type="text" id="cliente" placeholder="Cliente" required>
+    <input type="date" id="vencimento" required>
+    <input type="text" id="nota" placeholder="Nota" required>
+    <input type="number" id="valor" placeholder="Valor" required>
+    <textarea id="observacao" placeholder="Observações"></textarea>
+    <button type="submit"><i class="fa fa-plus"></i> Adicionar</button>
+  </form>
+  <input type="text" id="filtroNome" placeholder="Filtrar por cliente">
+  <select id="filtroStatus">
+    <option value="">Todos</option>
+    <option value="pago">Pago</option>
+    <option value="naoPago">Não Pago</option>
+  </select>
+  <table>
+    <thead>
+      <tr>
+        <th>Cliente</th><th>Vencimento</th><th>Nota</th><th>Valor</th>
+        <th>Operador</th><th>Ações</th><th>Observações</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="inadimplentes-list"></tbody>
+  </table>
+</section>
+
+<section id="chat">
+  <h2>Chat</h2>
+  <div id="chat-box"></div>
+  <input type="text" id="chat-msg" placeholder="Digite sua mensagem">
+  <button id="btn-send"><i class="fa fa-paper-plane"></i> Enviar</button>
+</section>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+<script>
+// Configuração Firebase
+const firebaseConfig = {
+  apiKey: "AIzaSyCIxtoOmnVXtav5wUcURmq2VbaPlAGiQuY",
+  authDomain: "sistemacobranca-76e7e.firebaseapp.com",
+  databaseURL: "https://sistemacobranca-76e7e-default-rtdb.firebaseio.com",
+  projectId: "sistemacobranca-76e7e",
+  storageBucket: "sistemacobranca-76e7e.firebasestorage.app",
+  messagingSenderId: "182543059899",
+  appId: "1:182543059899:web:1948fc7a1af01574ad929e"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// Estado atual do usuário
+let currentUser = localStorage.getItem('sgcUser') || "";
+
+// Navegação entre seções
+const sections = {login: document.getElementById('login'), inadimplentes: document.getElementById('inadimplentes'), chat: document.getElementById('chat')};
+function showSection(id){ Object.values(sections).forEach(s=>s.classList.remove('active')); sections[id].classList.add('active'); }
+document.getElementById('nav-login').addEventListener('click', ()=>showSection('login'));
+document.getElementById('nav-inadimplentes').addEventListener('click', ()=>showSection('inadimplentes'));
+document.getElementById('nav-chat').addEventListener('click', ()=>showSection('chat'));
+
+// Login
+document.getElementById('btn-login').addEventListener('click', ()=>{
+  const name = document.getElementById('username').value.trim();
+  if(!name) return alert('Digite seu nome');
+  currentUser = name;
+  localStorage.setItem('sgcUser', name);
+  showSection('inadimplentes');
+});
+
+// Adicionar inadimplente com tratamento de erro
+document.getElementById('addForm').addEventListener('submit', e => {
+  e.preventDefault();
+
+  const data = {
+    cliente: document.getElementById('cliente').value.trim(),
+    vencimento: document.getElementById('vencimento').value,
+    nota: document.getElementById('nota').value.trim(),
+    valor: parseFloat(document.getElementById('valor').value),
+    operador: currentUser,
+    observacao: document.getElementById('observacao').value.trim(),
+    status: 'naoPago',
+    acao: ''
+  };
+
+  if(!data.cliente || !data.vencimento || !data.nota || isNaN(data.valor)){
+    return alert('Preencha todos os campos corretamente.');
+  }
+
+  db.ref('inadimplentes').push(data)
+    .then(() => {
+      e.target.reset();
+      console.log('Cliente adicionado com sucesso!');
+      alert('Cliente adicionado!');
+    })
+    .catch(err => {
+      console.error('Erro ao adicionar cliente:', err);
+      alert('Erro ao adicionar cliente. Veja o console.');
+    });
+});
+
+// Render inadimplentes em tempo real
+db.ref('inadimplentes').on('value', snap => {
+  const tbody = document.getElementById('inadimplentes-list'); 
+  tbody.innerHTML = '';
+
+  snap.forEach(item => {
+    const d = item.val();
+    const filtroNome = document.getElementById('filtroNome').value.toLowerCase();
+    const filtroStatus = document.getElementById('filtroStatus').value;
+
+    if(filtroNome && !d.cliente.toLowerCase().includes(filtroNome)) return;
+    if(filtroStatus && d.status !== filtroStatus) return;
+
+    const tr = document.createElement('tr');
+    const statusClass = d.status === 'pago' ? 'status-pago' : 'status-naoPago';
+
+    tr.innerHTML = `
+      <td>${d.cliente}</td>
+      <td>${d.vencimento}</td>
+      <td>${d.nota}</td>
+      <td>${d.valor.toFixed(2)}</td>
+      <td>${d.operador}</td>
+      <td class="actions">
+        <button class="icon-btn" onclick="updateAcao('${item.key}','SGC')" style="background:#007bff"><i class="fa fa-building"></i>SGC</button>
+        <button class="icon-btn" onclick="updateAcao('${item.key}','Securitizadora')" style="background:#17a2b8"><i class="fa fa-university"></i>Securitizadora</button>
+        <button class="icon-btn" onclick="updateStatus('${item.key}','pago')" style="background:green"><i class="fa fa-check"></i>Pago</button>
+        <button class="icon-btn" onclick="updateStatus('${item.key}','naoPago')" style="background:red"><i class="fa fa-times"></i>Não Pago</button>
+        <button class="icon-btn" onclick="excluirCliente('${item.key}')" style="background:#6c757d"><i class="fa fa-trash"></i>Excluir</button>
+      </td>
+      <td contenteditable="true" onblur="updateObservacao('${item.key}', this.innerText)">${d.observacao || ''}</td>
+      <td><span class="${statusClass}">${d.status}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+});
+
+// Funções globais
+window.updateAcao = function(id, acao){ db.ref('inadimplentes/'+id).update({acao}); }
+window.updateStatus = function(id, status){ db.ref('inadimplentes/'+id).update({status}); }
+window.updateObservacao = function(id, obs){ db.ref('inadimplentes/'+id).update({observacao: obs}); }
+window.excluirCliente = function(id){ if(confirm('Tem certeza?')) db.ref('inadimplentes/'+id).remove(); }
+
+// Chat
+document.getElementById('btn-send').addEventListener('click', ()=>{
+  const msg = document.getElementById('chat-msg').value.trim();
+  if(!msg) return;
+  db.ref('chat').push({user:currentUser, text:msg});
+  document.getElementById('chat-msg').value='';
+});
+
+// Render chat
+db.ref('chat').on('value', snap=>{
+  const box = document.getElementById('chat-box');
+  box.innerHTML = '';
+  snap.forEach(item=>{
+    const d = item.val();
+    const div = document.createElement('div');
+    div.className = "msg "+(d.user===currentUser?"me":"other");
+    div.innerHTML = `<span>${d.user}: ${d.text}</span>`;
+    if(d.user===currentUser){
+      const btn=document.createElement('button');
+      btn.textContent="Excluir";
+      btn.onclick=()=>{ if(confirm("Excluir mensagem?")) db.ref("chat/"+item.key).remove(); };
+      div.appendChild(btn);
+    }
+    box.appendChild(div);
+  });
+  box.scrollTop = box.scrollHeight;
+});
+
+// Mostrar inadimplentes se já logado
+if(currentUser) showSection('inadimplentes');
+</script>
+</body>
+</html>
